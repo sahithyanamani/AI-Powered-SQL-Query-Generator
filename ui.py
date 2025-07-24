@@ -1,30 +1,77 @@
 import streamlit as st # type: ignore
 import requests # type: ignore
 
-# Set page title
-st.title("🧠 AI-Powered SQL Query Generator")
+# FastAPI backend URL
+API_URL = "http://127.0.0.1:8000"
 
-# Input text box for user query
-query_input = st.text_input("Enter your natural language query:")
+st.title("AI-Powered SQL Query Generator & Executor")
+st.markdown("(This app allows you to generate and execute SQL queries using AI.)")
 
-if st.button("Generate SQL"):
-    response = requests.post("http://127.0.0.1:8000/generate_sql/", json={"query": query_input})
-    sql_query = response.json().get("sql_query", "Error generating query")
-    st.code(sql_query, language="sql")
+# Retrieving available databases
+st.sidebar.header("📂 Database Selection")
 
-    # Store SQL query for execution
-    st.session_state["generated_sql"] = sql_query
-if "generated_sql" in st.session_state:
-    if st.button("Execute SQL"):
-        response = requests.post(
-            "http://127.0.0.1:8000/execute_sql/",
-            json={"query": st.session_state["generated_sql"]}
-        )
-        results = response.json().get("results", [])
-        optimization_tips = response.json().get("optimization_tips", "No optimization tips available.")
+if st.sidebar.button("🔄 List Databases"):
+    response = requests.get(f"{API_URL}/list_databases/")
+    if response.status_code == 200:
+        databases = response.json().get("databases", [])
+        st.sidebar.write("✅ Available Databases:")
+        st.sidebar.write(databases)
+    else:
+        st.sidebar.error("Error fetching databases")
+        
+# Select a database
+selected_db = st.sidebar.text_input("Enter Database Name:")
 
-        st.subheader("Query Results:")
-        st.write(results)
+if selected_db:
+    # Fetch tables
+    if st.sidebar.button("📋 Show Tables"):
+        response = requests.get(f"{API_URL}/list_tables/{selected_db}")
+        if response.status_code == 200:
+            tables = response.json().get("tables", [])
+            st.sidebar.write(f"📂 Tables in Database:")
+            st.sidebar.write(tables)
+        else:
+            st.sidebar.error("Error fetching tables")
 
-        st.subheader("Optimization Tips:")
-        st.write(optimization_tips)
+# Select a table
+selected_table = st.sidebar.text_input("Enter Table Name:")
+
+if selected_table:
+    # Fetch columns
+    if st.sidebar.button("📑 Show Columns"):
+        response = requests.get(f"{API_URL}/list_columns/{selected_db}/{selected_table}")
+        if response.status_code == 200:
+            columns = response.json().get("columns", [])
+            st.sidebar.write("🧱 Columns in Table:")
+            st.sidebar.write(columns)
+        else:
+            st.sidebar.error("Error fetching columns")
+
+# Generate SQL from Natural Language
+st.header("🧠 AI-Powered SQL Generation")
+natural_language_query = st.text_area("💬 Enter your query in plain English:")
+
+if st.button("⚙️ Generate SQL"):
+    response = requests.post(f"{API_URL}/generate_sql", params={"natural_language_query": natural_language_query})
+    if response.status_code == 200:
+        generated_sql = response.json().get("sql_query", "")
+        st.code(generated_sql, language="sql")
+    else:
+        st.error(" Error generating SQL query")
+
+#  Execute SQL Query
+st.header("🚀 Execute SQL Query")
+manual_sql_query = st.text_area("📝 Enter SQL query to execute:")
+
+if st.button("▶️ Run Query"):
+    response = requests.post(f"{API_URL}/execute_sql", params={"sql_query": manual_sql_query})
+    if response.status_code == 200:
+        results = response.json().get("results",[])
+        if results:
+            st.write(" Query results:")
+            st.table(results)
+        else:
+            st.write("No results found.")
+    else:
+        st.error(" Error executing SQL query")
+

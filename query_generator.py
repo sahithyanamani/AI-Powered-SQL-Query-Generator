@@ -1,11 +1,11 @@
 import os
-import openai 
-import sqlparse
+import openai # type: ignore
+import sqlparse # type: ignore
 import re
-from dotenv import load_dotenv
-from sqlalchemy import text 
-from sqlalchemy.exc import SQLAlchemyError
-from database import engine, get_schema
+from dotenv import load_dotenv # type: ignore
+from sqlalchemy import text  # type: ignore
+from sqlalchemy.exc import SQLAlchemyError # type: ignore
+from database import engine, list_databases, list_tables, list_columns
 
 #Load environment variables
 load_dotenv()
@@ -13,8 +13,27 @@ load_dotenv()
 #OpenAI API Key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
+# Setting Limits toavoid token limit issues
+MAX_TABLES = 5
+MAX_COLUMNS_PER_TABLE = 5
+
+def get_limited_schema():
+    """Fetches a reduced database schema to fit within OpenAI's token limits."""
+    schema = {}
+    databases = list_databases().get("databases", [])
+
+    for db in databases:
+        schema[db] = {}
+        tables = list_tables(db).get("tables", [])[:MAX_TABLES]
+
+        for table in tables:
+            schema[db][table] = list_columns(db, table).get("columns", [])[:MAX_COLUMNS_PER_TABLE]
+
+    return schema
+
+
 def clean_sql_output(response_text):
-    """Removes marknown formatting and extracts the raw SQL query."""
+    """extracts the raw SQL query."""
     #Removes Markdoen code block formatiing (```sql...```)
     clean_query = re.sub(r"```sql\n(.*?)\n```", r"\1", response_text, flags = re.DOTALL)
     
@@ -23,7 +42,7 @@ def clean_sql_output(response_text):
     
     return sql_match.group(0) if sql_match else clean_query.strip()
 
-def validate_sql_query(sql_query):
+'''def validate_sql_query(sql_query):
     """Validates the SQL query syntax before execution."""
     try:
         parsed = sqlparse.parse(sql_query)
@@ -31,13 +50,13 @@ def validate_sql_query(sql_query):
             return False, "Invalid SQL syntax."
         return True, None
     except Exception as e:
-        return False, str(e)
+        return False, str(e)'''
 
 def generate_sql_query(nl_query):
     """Converts natural language query to an optimized SQL query."""
-    schema = get_schema()
+    schema = get_limited_schema()
 
-    schema_text = "\n".join([f"{table}: {', '.join(columns)}" for table, columns in schema.items()])
+    schema_text = "\n".join([f"{db}.{table}: {', '.join(columns)}" for db, tables in schema.items() for table, columns in tables.items()])
     
     prompt = f"""
     You are an SQL expert. Convert the following natural language query into an optimized MySQL query.
@@ -75,65 +94,24 @@ def generate_sql_query(nl_query):
         print(f"Error generating SQL query: {e}")
         return None
 
-def suggest_index(sql_query):
-    """Suggests indexes for the executed SQL query."""
-    try:
-        with engine.connect() as connection:
-            explain_query = f"EXPLAIN {sql_query}"
-            result = connection.execute(text(explain_query))
-            execution_plan = result.fetchall()
-            
-        print("\nQuery Execution Plan:")
-        for row in execution_plan:
-            print(row)
-            
-        return "Consider adding an index on frequently used WHERE conditions."
-    except Exception as e:
-        return f"Could not generate execution plan: {e}"
 
 def execute_query(sql_query):
     """Executes a validated and optimized SQL query."""
-    is_valid, error_msg = validate_sql_query(sql_query)
-    if not is_valid:
-        print(f"SQL Validation Error: {error_msg}")
-        return None
     
     try:
-        # Open a separate connection for query execution
         with engine.connect() as connection:
             result = connection.execute(text(sql_query))
-            fetched_results = result.fetchall()
-
-        # Open a new connection for query optimization (avoid "commands out of sync" issue)
-        index_suggestion = suggest_index(sql_query)
-
-        return {
-            "results": fetched_results,
-            "optimization_tips": index_suggestion
-        }
-
-    except SQLAlchemyError as e:
-        print(f"Database Execution Error: {str(e)}")
-        return None
-
-
-if __name__ == "__main__":
-    user_input = input("Enter your natural language query: ")
-    sql_query = generate_sql_query(user_input)
-
-    if sql_query:
-        print(f"\nGenerated SQL Query:\n{sql_query}")
-
-        execution_results = execute_query(sql_query)
-
-        if execution_results:
-            print("\nQuery Results:")
-            for row in execution_results["results"]:
-                print(row)
-
-            print("\nOptimization Tips:", execution_results["optimization_tips"])
-        else:
-            print("No results found or error executing query.")
+            rows = result.fetchall()
             
-    else:
-        print("Failed to generate a valid SQL query.")
+            #Get column names
+            column_names = result.keys()
+            
+            # Convert results into a list of dictionaries
+            formatted_results = [dict(zip(column_names, row)) for row in rows]
+            
+        return {"results": formatted_results}
+    
+    except SQLAlchemyError as e:
+        return {"error": str(e)} 
+
+

@@ -1,45 +1,48 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from fastapi import HTTPException
+from fastapi import FastAPI # type: ignore
+import logging
+from database import list_databases, list_tables, list_columns
+from pydantic import BaseModel # type: ignore
+from fastapi import HTTPException, Query # type: ignore
 from query_generator import generate_sql_query, execute_query
 
 # Initialize FastAPI app
 app = FastAPI()
 
-class QueryRequest(BaseModel):
-    query: str
+#Configure Logging
+
+logging.basicConfig(level=logging.DEBUG)
+
+# API-Listing all the Databases
+@app.get("/list_databases/")
+def get_databases():
+    return list_databases()
+
+# API call to list all tables in a database
+@app.get("/list_tables/{database_name}")
+def get_tables(database_name: str):
+    return list_tables(database_name)
+
+# API call to list all columns in a table
+@app.get("/list_columns/{database_name}/{table_name}")
+def get_columns(database_name: str, table_name: str):
+    return list_columns(database_name, table_name)
+
+# API: Generate SQL query from Natural Language
 
 @app.post("/generate_sql/")
-async def generate_sql(request: QueryRequest):
+async def generate_sql(natural_language_query: str):
     """Generate SQL query from natural language input."""
-    sql_query = generate_sql_query(request.query)
-    if not sql_query:
-        return { "error": "Failed to generate SQL" }
-    return { "sql_query": sql_query }
+    logging.debug(f"Generating SQL Query for: {natural_language_query}")
+    sql_query = generate_sql_query(natural_language_query)
+    
+    if sql_query:
+        return {"sql_query": sql_query}
+    return {"error:" "Failed to generate SQL"}
+
+# API: Execute SQL query 
 
 @app.post("/execute_sql/")
-async def execute_sql(request: QueryRequest):
+def execute_sql(sql_query: str = Query(..., description = " SQL query to execute")):
     """Execute a given SQL query and return results."""
-    sql_query = request.query
-    try:
-        
-        results = execute_query(sql_query)
-        
-        if results is None:
-            raise HTTPException(status_code=500, detail="Error executing query")
-        
-        #Ensure proper JSON serialization
-        serialized_results = [dict(row._mapping) for row in results["results"]]
-        
-        return {
-         "results": serialized_results,
-         "optimization_tips": results["optimization_tips"]
-        }
-        
-    except  Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-#Run the FastAPI app
-if __name__=="__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    result = execute_query(sql_query)
+    return result 
